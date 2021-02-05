@@ -49,6 +49,7 @@ typedef struct dictEntry {
     union {
         void *val;
         uint64_t u64;
+        // 过期时间
         int64_t s64;
         double d;
     } v;

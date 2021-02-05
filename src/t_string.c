@@ -165,12 +165,15 @@ int getGenericCommand(client *c) {
     robj *o;
 
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL)
+        // 没找到
         return C_OK;
 
+//    如果key不是OBJ_STRING类型，则返回异常，OBJ_STRING包括数字
     if (o->type != OBJ_STRING) {
         addReply(c,shared.wrongtypeerr);
         return C_ERR;
     } else {
+        // 找到，并批量返回数据
         addReplyBulk(c,o);
         return C_OK;
     }

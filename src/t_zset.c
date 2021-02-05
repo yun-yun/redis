@@ -121,26 +121,37 @@ void zslFree(zskiplist *zsl) {
  * levels are less likely to be returned. */
 int zslRandomLevel(void) {
     int level = 1;
+//    ZSKIPLIST_P = 0.25
+//  取一个0 - 65535以内的随机数，如果少于 (0.25 * 65535 = 16383.8) 则level + 1
+//  因此level越高则概率越低
     while ((random()&0xFFFF) < (ZSKIPLIST_P * 0xFFFF))
         level += 1;
+    // 如果level超过32层，则只返回32
     return (level<ZSKIPLIST_MAXLEVEL) ? level : ZSKIPLIST_MAXLEVEL;
 }
 
 /* Insert a new node in the skiplist. Assumes the element does not already
  * exist (up to the caller to enforce that). The skiplist takes ownership
  * of the passed SDS string 'ele'. */
+// 这个插入方法不会判断节点是否已经存在，需要调用者自己判断
 zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
-    zskiplistNode *update[ZSKIPLIST_MAXLEVEL], *x;
-    unsigned int rank[ZSKIPLIST_MAXLEVEL];
+//    update用于存放要更新的level[]每个层级的前一个节点
+    zskiplistNode *update[ZSKIPLIST_MAXLEVEL];
+    zskiplistNode *x;
+    unsigned int rank[ZSKIPLIST_MAXLEVEL];  //rank用于存放从header节点到update[i]节点的跨度
     int i, level;
 
+    // 因为这边使用了很多的score判断,推测是为了找到要插入的位置
     serverAssert(!isnan(score));
     x = zsl->header;
     for (i = zsl->level-1; i >= 0; i--) {
         /* store rank that is crossed to reach the insert position */
         rank[i] = i == (zsl->level-1) ? 0 : rank[i+1];
         while (x->level[i].forward &&
+                // 节点分数按从小到大排序
+                // 按分数找到第一个大于score的节点
                 (x->level[i].forward->score < score ||
+                    // 或者这个节点的分数相等，但是key的长度大于传入的值
                     (x->level[i].forward->score == score &&
                     sdscmp(x->level[i].forward->ele,ele) < 0)))
         {
@@ -153,6 +164,7 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
      * scores, reinserting the same element should never happen since the
      * caller of zslInsert() should test in the hash table if the element is
      * already inside or not. */
+    // 为节点随机找个level
     level = zslRandomLevel();
     if (level > zsl->level) {
         for (i = zsl->level; i < level; i++) {
@@ -160,27 +172,46 @@ zskiplistNode *zslInsert(zskiplist *zsl, double score, sds ele) {
             update[i] = zsl->header;
             update[i]->level[i].span = zsl->length;
         }
+
         zsl->level = level;
     }
+//     创建一个新节点
     x = zslCreateNode(level,score,ele);
+
     for (i = 0; i < level; i++) {
+        // 将x 插入 update 与 update指向下一级的中间
         x->level[i].forward = update[i]->level[i].forward;
         update[i]->level[i].forward = x;
 
         /* update span covered by update[i] as x is inserted here */
+        // 更新 x 节点的 level[i] 层的跨度 span，利用rank
+        /*
+         *                                       要插入的节点
+         *                                       |---------？----------->↓
+         *                             前一节点
+         *                                |--------------span(i)-------->
+         * |------------rank1------------->
+         *                                    |---------span(0)--------->↑
+         * |------------rank0----------------->
+         */
         x->level[i].span = update[i]->level[i].span - (rank[0] - rank[i]);
+        // 更新 update[i] 节点的 level[i] 层的跨度 span
         update[i]->level[i].span = (rank[0] - rank[i]) + 1;
     }
 
     /* increment span for untouched levels */
+    // 如果level较小，则上层level的跨度没更新，在此更新
     for (i = level; i < zsl->level; i++) {
         update[i]->level[i].span++;
     }
 
+    // //更新 x 的 backward 指针，如果 update[0] 是头结点则为 NULL，否则为 update[0]
     x->backward = (update[0] == zsl->header) ? NULL : update[0];
+//    如果x的第一层level有下一个节点，则将下一个节点的backward改成x自己
     if (x->level[0].forward)
         x->level[0].forward->backward = x;
-    else
+//     如果没下一个节点，则说明x是尾结点
+    els
         zsl->tail = x;
     zsl->length++;
     return x;
@@ -1358,8 +1389,11 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
             /* Optimize: check if the element is too large or the list
              * becomes too long *before* executing zzlInsert. */
             zobj->ptr = zzlInsert(zobj->ptr,ele,score);
+            // 如果ziplist长度超过zset-max-ziplist-entries 128 或
+            // 要插入的字符串长度超过zset-max-ziplist-value 64
             if (zzlLength(zobj->ptr) > server.zset_max_ziplist_entries ||
                 sdslen(ele) > server.zset_max_ziplist_value)
+                //转换为skiplist
                 zsetConvert(zobj,OBJ_ENCODING_SKIPLIST);
             if (newscore) *newscore = score;
             *flags |= ZADD_ADDED;

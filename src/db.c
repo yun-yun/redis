@@ -105,10 +105,12 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
 robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {
     robj *val;
 
+    // key 过期了，但是还在内存中，如果完全不存在，是返回0
     if (expireIfNeeded(db,key) == 1) {
         /* Key expired. If we are in the context of a master, expireIfNeeded()
          * returns 0 only when the key does not exist at all, so it's safe
          * to return NULL ASAP. */
+        // 判断自己是否是master，如果是，则返回key不存在
         if (server.masterhost == NULL)
             goto keymiss;
 
@@ -124,9 +126,12 @@ robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags) {
          * will say the key as non existing.
          *
          * Notably this covers GETs when slaves are used to scale reads. */
+        // 经过一些判断，认为可以安全的返回key不存在
         if (server.current_client &&
+        // 当前客户端不是master
             server.current_client != server.master &&
             server.current_client->cmd &&
+            // 且当前客户端是ReadyOnly
             server.current_client->cmd->flags & CMD_READONLY)
         {
             goto keymiss;
@@ -168,6 +173,7 @@ robj *lookupKeyWrite(redisDb *db, robj *key) {
 
 robj *lookupKeyReadOrReply(client *c, robj *key, robj *reply) {
     robj *o = lookupKeyRead(c->db, key);
+    // 向客户端返回数据
     if (!o) addReply(c,reply);
     return o;
 }
@@ -1343,9 +1349,11 @@ int keyIsExpired(redisDb *db, robj *key) {
     mstime_t when = getExpire(db,key);
     mstime_t now;
 
+    // key的过期时间小于0，返回不存在
     if (when < 0) return 0; /* No expire for this key */
 
     /* Don't expire anything while loading. It will be done later. */
+    // 服务器正在加载时，直接返回不存在
     if (server.loading) return 0;
 
     /* If we are in the context of a Lua script, we pretend that time is
@@ -1406,9 +1414,12 @@ int expireIfNeeded(redisDb *db, robj *key) {
      * Still we try to return the right information to the caller,
      * that is, 0 if we think the key should be still valid, 1 if
      * we think the key is expired at this time. */
+    // 从服务器不会主动删除key,会等待主服务器的del命令，即使过期，也是返回1
+    // 需要由调用方决定是否要返回key
     if (server.masterhost != NULL) return 1;
 
     /* Delete the key */
+    // 被动删除
     server.stat_expiredkeys++;
     propagateExpire(db,key,server.lazyfree_lazy_expire);
     notifyKeyspaceEvent(NOTIFY_EXPIRED,

@@ -482,8 +482,11 @@ dictEntry *dictFind(dict *d, const void *key)
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
     if (dictIsRehashing(d)) _dictRehashStep(d);
+    // 对key进行hash
     h = dictHashKey(d, key);
+    //去2个hash table查找，如果没有
     for (table = 0; table <= 1; table++) {
+//        将key的hash与table的长度进行&
         idx = h & d->ht[table].sizemask;
         he = d->ht[table].table[idx];
         while(he) {
